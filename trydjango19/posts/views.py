@@ -1,20 +1,25 @@
 from urllib import quote_plus
-from django.http import  HttpResponse, HttpResponseRedirect
+from django.http import  HttpResponse, HttpResponseRedirect, Http404
 from django.contrib import messages
 from django.shortcuts import render, get_object_or_404, redirect
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
+from django.utils import timezone
 from .form import PostForm
 from .models import Post
+from django.db.models import Q
 
 
 # Create your views here.
 
 
 def posts_create(request):
-    
+    if not request.user.is_staff or not request.user.is_superuser:
+        raise Http404
+
     form = PostForm(request.POST or None, request.FILES or None) 
     if form.is_valid():
         instance = form.save(commit=False)
+        instance.user = request.user
         instance.save()
         #message success
         messages.success(request, "Succsessfully Created")
@@ -30,6 +35,9 @@ def posts_detail(request, slug=None):
     
     #Post.objects.get(id=18)
     instance = get_object_or_404(Post,slug=slug)
+    if instance.draft or instance.publish > timezone.now().date():
+        if not request.user.is_staff or not request.user.is_superuser:
+            raise Http404
     share_string = quote_plus(instance.content)    
     context = {
         "title" : instance.title,
@@ -40,8 +48,18 @@ def posts_detail(request, slug=None):
 
 def posts_list(request):
 
-    queryset_list = Post.objects.all().order_by("-timestamp")
-    paginator = Paginator(queryset_list, 5) # Show 25 contacts per page
+    queryset_list = Post.objects.active().order_by("-timestamp")
+    if request.user.is_staff or request.user.is_superuser:
+        queryset_list = Post.objects.all()
+    query =request.GET.get("q")
+    if query:
+        queryset_list = queryset_list.filter(
+            Q(title__icontains=query) |
+            Q(content__icontains=query) | 
+            Q(user__first_name__icontains=query) |
+            Q(user__last_name__icontains=query)
+            ).distinct()
+    paginator = Paginator(queryset_list, 2) # Show 25 contacts per page
     page_request_var = 'page'
 
     page = request.GET.get(page_request_var)
@@ -65,6 +83,8 @@ def posts_list(request):
 
 def posts_update(request, slug=None):
     
+    if not request.user.is_staff or not request.user.is_superuser:
+        raise Http404
     #Post.objects.get(id=18)
     instance = get_object_or_404(Post,slug=slug) 
 
@@ -84,7 +104,8 @@ def posts_update(request, slug=None):
     return render(request, "post_form.html", context)
 
 def posts_delete(request, slug=None):
-    
+    if not request.user.is_staff or not request.user.is_superuser:
+        raise Http404
     instance = get_object_or_404(Post,slug=slug)
     instance.delete()
     messages.success(request, "Succsessfully Deleted")
